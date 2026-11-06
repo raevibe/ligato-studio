@@ -1,0 +1,51 @@
+# Push a tag like v0.1.0 to build Ligato Studio and publish it as a GitHub release.
+# install.sh downloads the asset from the latest release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Built on an older Ubuntu so the binary runs on older glibc versions too.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Test
+        run: cargo test --release
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Package
+        run: |
+          mkdir -p dist/ligato-studio/contrib
+          cp target/release/sc0710-studio install.sh README.md LICENSE dist/ligato-studio/
+          cp contrib/* dist/ligato-studio/contrib/
+          tar -C dist -czf ligato-studio-x86_64-linux.tar.gz ligato-studio
+          sha256sum ligato-studio-x86_64-linux.tar.gz > ligato-studio-x86_64-linux.tar.gz.sha256
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            tag="v$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" ligato-studio-x86_64-linux.tar.gz* --clobber
+          else
+            gh release create "$tag" ligato-studio-x86_64-linux.tar.gz* --title "Ligato Studio $tag" --generate-notes
+          fi

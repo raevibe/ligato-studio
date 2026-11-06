@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Ligato Studio
+GenericName=Capture Card Studio
+Comment=Preview, configure and record Elgato SC0710 PCIe capture cards
+Exec=sc0710-studio
+Icon=sc0710-studio
+Categories=AudioVideo;Video;Recorder;
+Keywords=capture;elgato;hdmi;record;4k60;
+StartupWMClass=sc0710-studio
+Terminal=false
+Actions=all-devices;
+
+[Desktop Action all-devices]
+Name=Show All Capture Devices
+Exec=sc0710-studio --all-devices

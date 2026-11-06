@@ -1,0 +1,8 @@
+# Let members of the "video" group change the sc0710 driver parameters that
+# Ligato Studio controls (HDR tonemapping, colour depth, audio hold), so the
+# app does not need a pkexec prompt for each change.
+#
+# Install:  sudo cp 99-sc0710-studio.rules /etc/udev/rules.d/
+#           sudo udevadm control --reload && sudo modprobe -r sc0710 && sudo modprobe sc0710
+ACTION=="add", SUBSYSTEM=="module", KERNEL=="sc0710", \
+  RUN+="/bin/sh -c 'cd /sys/module/sc0710/parameters && for p in hw_tonemap sw_tonemap hdr_bgr24 force_quantization color_deep keep_audio_alive use_status_images; do [ -e $$p ] && chgrp video $$p && chmod g+w $$p; done'"
