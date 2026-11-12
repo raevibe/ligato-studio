@@ -154,7 +154,8 @@ impl App {
             .as_ref()
             .map(|d| d.enum_formats().iter().any(|(f, _)| *f == u32::from_le_bytes(*b"YUYV")))
             .unwrap_or(false);
-        let link = dev.pci_path.as_deref().and_then(PciLink::read);
+        // Only PCIe capture cards: a USB device's PCI parent is its host controller.
+        let link = dev.pci_path.as_deref().filter(|_| dev.is_sc0710()).and_then(PciLink::read);
         if let Some(l) = &link {
             self.note(format!("PCIe link: {}", l.describe()));
         }

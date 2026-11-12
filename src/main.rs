@@ -35,7 +35,7 @@ fn print_devices() {
                 println!("    current: {}x{} {} stride {}", f.width, f.height, v4l2::fourcc_str(f.pixelformat), f.bytesperline);
             }
             let fmt = dev.get_format().ok();
-            let link = d.pci_path.as_deref().and_then(bandwidth::PciLink::read);
+            let link = d.pci_path.as_deref().filter(|_| d.is_sc0710()).and_then(bandwidth::PciLink::read);
             if let Some(l) = &link {
                 println!("    pcie: {}", l.describe());
             }

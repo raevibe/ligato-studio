@@ -1,6 +1,6 @@
 [package]
 name = "sc0710-studio"
-version = "0.1.1"
+version = "0.1.2"
 license = "MIT"
 edition = "2021"
 description = "Linux capture app for Elgato SC0710-based PCIe cards (4K60 Pro MK.2, 4K Pro, Cam Link Pro) on top of the sc0710 driver"
