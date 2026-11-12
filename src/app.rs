@@ -1,6 +1,7 @@
 //! egui front end.
 
 use crate::audio::AudioMonitor;
+use crate::bandwidth::{self, PciLink, Verdict};
 use crate::capture::{self, CaptureHandle, Command, StartOptions};
 use crate::device::{self, DeviceInfo};
 use crate::driver::{self, ProcState};
@@ -22,6 +23,8 @@ struct DeviceExtras {
     edid_source: Option<i32>,
     edid: Option<Result<EdidSummary, String>>,
     timings: Option<Result<DvTimings, String>>,
+    link: Option<PciLink>,
+    can_yuyv: bool,
 }
 
 pub struct App {
@@ -147,7 +150,15 @@ impl App {
             (Some(d), Some(c)) => d.get_ctrl(c.id).ok(),
             _ => None,
         };
-        self.extras = Some(DeviceExtras { info_dev, edid_ctrl, edid_source, edid: None, timings: None });
+        let can_yuyv = info_dev
+            .as_ref()
+            .map(|d| d.enum_formats().iter().any(|(f, _)| *f == u32::from_le_bytes(*b"YUYV")))
+            .unwrap_or(false);
+        let link = dev.pci_path.as_deref().and_then(PciLink::read);
+        if let Some(l) = &link {
+            self.note(format!("PCIe link: {}", l.describe()));
+        }
+        self.extras = Some(DeviceExtras { info_dev, edid_ctrl, edid_source, edid: None, timings: None, link, can_yuyv });
         self.read_edid();
         self.refresh_driver_params();
         self.update_monitor();
@@ -175,7 +186,7 @@ impl App {
         self.proc_state = driver::read_proc_state();
         if let Some(ex) = self.extras.as_mut() {
             ex.timings = ex.info_dev.as_ref().map(|d| d.query_dv_timings().map_err(|e| match e.raw_os_error() {
-                Some(libc::ENOLINK) | Some(libc::ENOLCK) => "no signal".to_string(),
+                Some(libc::ENOLINK) | Some(libc::ENOLCK) | Some(libc::ENODATA) => "no signal".to_string(),
                 Some(libc::ERANGE) => "out of range".to_string(),
                 Some(libc::ENOTTY) => "not supported".to_string(),
                 _ => e.to_string(),
@@ -454,6 +465,13 @@ impl App {
 
     fn signal_section(&mut self, ui: &mut egui::Ui) {
         let timings = self.extras.as_ref().and_then(|e| e.timings.clone());
+        let link = self.extras.as_ref().and_then(|e| e.link);
+        let can_yuyv = self.extras.as_ref().map(|e| e.can_yuyv).unwrap_or(false);
+        let fourcc = self.capture.as_ref().and_then(|c| c.shared.status.lock().unwrap().format.map(|f| f.fourcc));
+        let bw = match (&link, &timings, fourcc) {
+            (Some(l), Some(Ok(t)), Some(fc)) => bandwidth::check(l, t.width, t.height, t.fps(), fc, can_yuyv),
+            _ => None,
+        };
         egui::Grid::new("sig").num_columns(2).striped(true).show(ui, |ui| {
             match timings {
                 Some(Ok(t)) => {
@@ -470,6 +488,27 @@ impl App {
                     ui.end_row();
                 }
                 None => {}
+            }
+            if let Some(l) = &link {
+                ui.label("PCIe link");
+                ui.label(l.describe());
+                ui.end_row();
+            }
+            if let (Some(c), Some(fc)) = (&bw, fourcc) {
+                ui.label("Bandwidth");
+                let text = format!(
+                    "{:.0} of ~{:.0} MB/s ({})",
+                    c.needed / 1e6,
+                    c.usable / 1e6,
+                    v4l2::fourcc_str(fc)
+                );
+                let color = match c.verdict {
+                    Verdict::Ok => ui.visuals().text_color(),
+                    Verdict::Tight => Color32::from_rgb(230, 180, 60),
+                    Verdict::Over => Color32::from_rgb(235, 90, 80),
+                };
+                ui.label(RichText::new(text).color(color));
+                ui.end_row();
             }
             if let Some(dev) = self.current().filter(|d| d.is_sc0710()) {
                 let caps = dev.board.capabilities();
@@ -506,6 +545,20 @@ impl App {
                 }
             }
         });
+        if let Some(c) = bw.filter(|c| c.verdict != Verdict::Ok) {
+            let (color, head) = match c.verdict {
+                Verdict::Over => (
+                    Color32::from_rgb(235, 90, 80),
+                    "Not enough PCIe bandwidth for this signal: expect black or torn frames.",
+                ),
+                _ => (Color32::from_rgb(230, 180, 60), "PCIe bandwidth is nearly maxed out: frames may tear."),
+            };
+            ui.add_space(4.0);
+            ui.label(RichText::new(head).color(color).strong());
+            if let Some(a) = c.advice {
+                ui.label(a);
+            }
+        }
     }
 
     fn video_section(&mut self, ui: &mut egui::Ui, dev: &DeviceInfo, caps: &device::Capabilities) {
@@ -588,7 +641,7 @@ impl App {
         let hdr = self.input_is_hdr();
         let eff = tonemap::determine_state(hdr, self.settings.hdr_mode, self.settings.record_hdr, self.settings.tonemapping);
         ui.label(format!(
-            "Input is {} → {}",
+            "Input is {}: {}",
             if hdr { "HDR" } else { "SDR" },
             match (hdr, eff.hardware && caps.supports_hw_tonemap, eff.software || (eff.hardware && !caps.supports_hw_tonemap)) {
                 (false, _, _) => "no tonemapping needed",

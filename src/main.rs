@@ -1,5 +1,6 @@
 mod app;
 mod audio;
+mod bandwidth;
 mod capture;
 mod convert;
 mod device;
@@ -33,8 +34,30 @@ fn print_devices() {
             if let Ok(f) = dev.get_format() {
                 println!("    current: {}x{} {} stride {}", f.width, f.height, v4l2::fourcc_str(f.pixelformat), f.bytesperline);
             }
+            let fmt = dev.get_format().ok();
+            let link = d.pci_path.as_deref().and_then(bandwidth::PciLink::read);
+            if let Some(l) = &link {
+                println!("    pcie: {}", l.describe());
+            }
             match dev.query_dv_timings() {
-                Ok(t) => println!("    signal: {}x{}{} @ {:.2} Hz", t.width, t.height, if t.interlaced { "i" } else { "p" }, t.fps()),
+                Ok(t) => {
+                    println!("    signal: {}x{}{} @ {:.2} Hz", t.width, t.height, if t.interlaced { "i" } else { "p" }, t.fps());
+                    let can_yuyv = dev.enum_formats().iter().any(|(f, _)| *f == u32::from_le_bytes(*b"YUYV"));
+                    if let (Some(l), Some(f)) = (&link, &fmt) {
+                        if let Some(c) = bandwidth::check(l, t.width, t.height, t.fps(), f.pixelformat, can_yuyv) {
+                            let tag = match c.verdict {
+                                bandwidth::Verdict::Ok => "ok",
+                                bandwidth::Verdict::Tight => "TIGHT",
+                                bandwidth::Verdict::Over => "NOT ENOUGH",
+                            };
+                            println!("    bandwidth: needs {:.0} of ~{:.0} MB/s: {tag}", c.needed / 1e6, c.usable / 1e6);
+                            if let Some(a) = c.advice {
+                                println!("      {a}");
+                            }
+                        }
+                    }
+                }
+                Err(e) if e.raw_os_error() == Some(libc::ENODATA) => println!("    signal: none"),
                 Err(e) => println!("    signal: {e}"),
             }
             for c in dev.controls() {

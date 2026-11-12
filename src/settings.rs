@@ -18,8 +18,8 @@ impl ColorRange {
     pub fn label(self) -> &'static str {
         match self {
             ColorRange::Bypass => "Bypass (as received)",
-            ColorRange::Expand => "Expand (limited → full)",
-            ColorRange::Shrink => "Shrink (full → limited)",
+            ColorRange::Expand => "Expand (limited to full)",
+            ColorRange::Shrink => "Shrink (full to limited)",
         }
     }
 }
